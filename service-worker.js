@@ -1,6 +1,7 @@
-const CACHE_NAME = 'interview-practice-v1';
+﻿const CACHE_NAME = 'interview-practice-v1';
 const ASSETS = [
   './',
+  './index.html',
   './interview-random-practice.html',
   './manifest.json',
   './icons/icon.svg'
@@ -29,3 +30,4 @@ self.addEventListener('fetch', event => {
     fetch(event.request).catch(() => caches.match(event.request))
   );
 });
+
