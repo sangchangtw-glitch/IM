@@ -309,8 +309,20 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       window.speechSynthesis.speak(utterance);
     }
 
+    function isPracticeVoice(voice) {
+      const blockedNames = [
+        'bad news', 'bahh', 'bells', 'boing', 'bubbles', 'cellos',
+        'good news', 'jester', 'organ', 'superstar', 'trinoids',
+        'wobble', 'whisper', 'zarvox'
+      ];
+      const name = voice.name.toLowerCase();
+      return voice.lang
+        && voice.lang.toLowerCase().startsWith('en')
+        && !blockedNames.some(blocked => name.includes(blocked));
+    }
+
     function randomizeVoice() {
-      const englishVoices = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('en'));
+      const englishVoices = voices.filter(isPracticeVoice);
       if (!englishVoices.length) return;
       const randomVoice = englishVoices[Math.floor(Math.random() * englishVoices.length)];
       voiceSelect.value = randomVoice.name;
@@ -339,7 +351,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       const previous = voiceSelect.value;
       voiceSelect.innerHTML = '';
       voices
-        .filter(v => v.lang && v.lang.toLowerCase().startsWith('en'))
+        .filter(isPracticeVoice)
         .forEach(v => {
           const option = document.createElement('option');
           option.value = v.name;
