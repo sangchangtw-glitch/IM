@@ -1,8 +1,8 @@
-{
+﻿{
   "name": "Interview Random Question Practice",
   "short_name": "Interview Practice",
   "description": "Random interview question practice with Google Sheet sync and browser voice.",
-  "start_url": "interview-random-practice.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f7f7f4",
@@ -16,3 +16,4 @@
     }
   ]
 }
+
