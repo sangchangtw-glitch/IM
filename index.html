@@ -112,6 +112,21 @@
       line-height: 1.45;
     }
 
+    .tips-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+      background: #fbfbf8;
+      font-size: 15px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .tips-box:empty::before {
+      content: "No tips loaded yet.";
+      color: var(--muted);
+    }
+
     .meta {
       display: flex;
       justify-content: space-between;
@@ -160,6 +175,19 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       </div>
     </section>
 
+    <section class="panel">
+      <div class="meta">
+        <strong>Answer Tips</strong>
+        <span id="tipsStatus">Not synced yet</span>
+      </div>
+      <div class="tips-box" id="tipsBox"></div>
+      <div class="row">
+        <button id="syncTips">Sync Answer Tips</button>
+        <button id="toggleTips">Hide Tips</button>
+        <span class="small">Reads the Answer Tips sheet tab, column A.</span>
+      </div>
+    </section>
+
     <section class="panel" id="practicePanel">
       <div class="meta">
         <span id="counter">0 questions loaded</span>
@@ -187,10 +215,15 @@ Tell me about a time when you had to make a judgment under incomplete informatio
   </main>
 
   <script>
-    const sheetCsvUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSpCE5i2BvfpUQ5KMNoD71wHJMG-iGoNsktsy8QNxBheFxxvzTz3iQzPOvzURq_3VAHEUb2ki9NxuvA/pub?output=csv';
+    const googleSheetId = '1St9zABXfy2qfjBXZTd_ICJizXc86E_o18LnHocC2RgM';
+    const questionBankGvizUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/gviz/tq?gid=0`;
+    const tipsGvizUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/gviz/tq?gid=1665061689`;
+    const tipsSheetName = 'Answer Tips';
     const sampleQuestions = document.getElementById('questions').value;
     const questionsEl = document.getElementById('questions');
     const questionBox = document.getElementById('questionBox');
+    const tipsBox = document.getElementById('tipsBox');
+    const tipsStatus = document.getElementById('tipsStatus');
     const counter = document.getElementById('counter');
     const remaining = document.getElementById('remaining');
     const voiceSelect = document.getElementById('voice');
@@ -279,12 +312,26 @@ Tell me about a time when you had to make a judgment under incomplete informatio
         .filter(question => question && question.toUpperCase() !== 'TBD');
     }
 
-    function loadSheetQuestionsWithJsonp() {
+    function tipsFromGvizResponse(response) {
+      const rows = response?.table?.rows || [];
+      return rows
+        .map(row => (row.c || [])
+          .map(cell => String((cell && (cell.v || cell.f)) || '').trim())
+          .filter(Boolean)
+          .join(' ')
+        )
+        .map(line => line.replace(/\s+/g, ' ').trim())
+        .filter(line => line && !/^tips?$/i.test(line) && line.toUpperCase() !== 'TBD');
+    }
+
+    function loadSheetWithJsonp(sheetName, parser, sourceUrl) {
       return new Promise((resolve, reject) => {
         const callbackName = `sheetCallback_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-        const gvizUrl = sheetCsvUrl
-          .replace('/pub?output=csv', '/gviz/tq')
-          + `?tqx=out:json;responseHandler:${callbackName}&cacheBust=${Date.now()}`;
+        const sheetParam = sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : '';
+        const baseUrl = sourceUrl || questionBankGvizUrl;
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        const gvizUrl = baseUrl
+          + `${separator}tqx=out:json;responseHandler:${callbackName}${sheetParam}&cacheBust=${Date.now()}`;
         const script = document.createElement('script');
         const cleanup = () => {
           delete window[callbackName];
@@ -293,7 +340,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
 
         window[callbackName] = response => {
           try {
-            resolve(questionsFromGvizResponse(response));
+            resolve(parser(response));
           } catch (error) {
             reject(error);
           } finally {
@@ -311,13 +358,30 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       });
     }
 
+    function loadSheetQuestionsWithJsonp() {
+      return loadSheetWithJsonp('', questionsFromGvizResponse);
+    }
+
     async function loadSheetQuestions() {
+      return loadSheetQuestionsWithJsonp();
+    }
+
+    async function syncAnswerTips() {
+      tipsStatus.textContent = 'Syncing tips...';
       try {
-        const response = await fetch(`${sheetCsvUrl}&cacheBust=${Date.now()}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return questionsFromSheetCsv(await response.text());
+        const tips = await loadSheetWithJsonp('', tipsFromGvizResponse, tipsGvizUrl);
+        if (!tips.length) throw new Error(`No tips found in "${tipsSheetName}".`);
+        tipsBox.textContent = tips.map(tip => `- ${tip}`).join('\n');
+        localStorage.setItem('interviewAnswerTips', tipsBox.textContent);
+        tipsStatus.textContent = `Synced ${tips.length} tips.`;
       } catch (error) {
-        return loadSheetQuestionsWithJsonp();
+        const cachedTips = localStorage.getItem('interviewAnswerTips');
+        if (cachedTips) {
+          tipsBox.textContent = cachedTips;
+          tipsStatus.textContent = `Could not sync tips. Using saved tips. ${error.message}`;
+        } else {
+          tipsStatus.textContent = `Could not sync tips. ${error.message}`;
+        }
       }
     }
 
@@ -428,6 +492,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     });
 
     document.getElementById('syncSheet').addEventListener('click', syncGoogleSheet);
+    document.getElementById('syncTips').addEventListener('click', syncAnswerTips);
     document.getElementById('random').addEventListener('click', randomQuestion);
     document.getElementById('replay').addEventListener('click', () => {
       if (currentQuestion) speak(currentQuestion);
@@ -441,13 +506,21 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       practicePanel.classList.toggle('hidden-question');
       e.target.textContent = practicePanel.classList.contains('hidden-question') ? 'Show Text' : 'Hide Text';
     });
+    document.getElementById('toggleTips').addEventListener('click', (e) => {
+      const hidden = tipsBox.style.display === 'none';
+      tipsBox.style.display = hidden ? '' : 'none';
+      e.target.textContent = hidden ? 'Hide Tips' : 'Show Tips';
+    });
 
     const saved = localStorage.getItem('interviewQuestions');
     if (saved) questionsEl.value = saved;
+    const savedTips = localStorage.getItem('interviewAnswerTips');
+    if (savedTips) tipsBox.textContent = savedTips;
     parseQuestions();
     loadVoices();
     window.speechSynthesis.onvoiceschanged = loadVoices;
     syncGoogleSheet();
+    syncAnswerTips();
 
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       navigator.serviceWorker.register('service-worker.js');
