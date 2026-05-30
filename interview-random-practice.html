@@ -207,7 +207,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       </div>
       <div class="row">
         <button class="primary" id="random">Random Question</button>
-        <button id="saveNote">Save Note</button>
+        <button id="saveNote">Add Note</button>
         <button id="replay">Replay</button>
         <button id="stop">Stop</button>
         <button id="resetRound">Reset Round</button>
@@ -293,11 +293,16 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       questionNotes.placeholder = 'Write notes for this question...';
     }
 
-    function loadNotesWithJsonp() {
+    function notesApiJsonp(params = {}) {
       return new Promise((resolve, reject) => {
         const callbackName = `notesCallback_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
         const script = document.createElement('script');
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('Notes sync timed out.'));
+        }, 12000);
         const cleanup = () => {
+          window.clearTimeout(timeout);
           delete window[callbackName];
           script.remove();
         };
@@ -322,9 +327,18 @@ Tell me about a time when you had to make a judgment under incomplete informatio
           reject(new Error('Notes sync failed.'));
         };
 
-        script.src = `${notesApiUrl}?callback=${callbackName}&cacheBust=${Date.now()}`;
+        const query = new URLSearchParams({
+          ...params,
+          callback: callbackName,
+          cacheBust: Date.now()
+        });
+        script.src = `${notesApiUrl}?${query.toString()}`;
         document.body.appendChild(script);
       });
+    }
+
+    function loadNotesWithJsonp() {
+      return notesApiJsonp();
     }
 
     async function syncNotesFromSheet() {
@@ -341,12 +355,9 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     }
 
     async function saveNoteToSheet(key, question, note) {
-      const payload = encodeURIComponent(JSON.stringify({ key, question, note }));
-      await fetch(notesApiUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: `payload=${payload}`
+      await notesApiJsonp({
+        action: 'save',
+        payload: JSON.stringify({ key, question, note })
       });
     }
 
