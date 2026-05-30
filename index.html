@@ -268,13 +268,63 @@ Tell me about a time when you had to make a judgment under incomplete informatio
         .filter(question => question && question.toUpperCase() !== 'TBD');
     }
 
-    async function syncGoogleSheet() {
-      sourceStatus.textContent = 'Syncing Google Sheet...';
+    function questionsFromGvizResponse(response) {
+      const rows = response?.table?.rows || [];
+      return rows
+        .slice(1)
+        .map(row => {
+          const cell = row.c && row.c[1];
+          return String((cell && (cell.v || cell.f)) || '').replace(/\s+/g, ' ').trim();
+        })
+        .filter(question => question && question.toUpperCase() !== 'TBD');
+    }
+
+    function loadSheetQuestionsWithJsonp() {
+      return new Promise((resolve, reject) => {
+        const callbackName = `sheetCallback_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+        const gvizUrl = sheetCsvUrl
+          .replace('/pub?output=csv', '/gviz/tq')
+          + `?tqx=out:json;responseHandler:${callbackName}&cacheBust=${Date.now()}`;
+        const script = document.createElement('script');
+        const cleanup = () => {
+          delete window[callbackName];
+          script.remove();
+        };
+
+        window[callbackName] = response => {
+          try {
+            resolve(questionsFromGvizResponse(response));
+          } catch (error) {
+            reject(error);
+          } finally {
+            cleanup();
+          }
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('Google Sheet JSONP sync failed.'));
+        };
+
+        script.src = gvizUrl;
+        document.body.appendChild(script);
+      });
+    }
+
+    async function loadSheetQuestions() {
       try {
         const response = await fetch(`${sheetCsvUrl}&cacheBust=${Date.now()}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const csvText = await response.text();
-        const sheetQuestions = questionsFromSheetCsv(csvText);
+        return questionsFromSheetCsv(await response.text());
+      } catch (error) {
+        return loadSheetQuestionsWithJsonp();
+      }
+    }
+
+    async function syncGoogleSheet() {
+      sourceStatus.textContent = 'Syncing Google Sheet...';
+      try {
+        const sheetQuestions = await loadSheetQuestions();
 
         if (!sheetQuestions.length) {
           throw new Error('No usable questions found in column B.');
