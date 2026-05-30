@@ -355,9 +355,33 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     }
 
     async function saveNoteToSheet(key, question, note) {
-      await notesApiJsonp({
-        action: 'save',
-        payload: JSON.stringify({ key, question, note })
+      return new Promise((resolve) => {
+        const frameName = `notesPostFrame_${Date.now()}`;
+        const iframe = document.createElement('iframe');
+        iframe.name = frameName;
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = notesApiUrl;
+        form.target = frameName;
+        form.style.display = 'none';
+
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'payload';
+        input.value = JSON.stringify({ key, question, note });
+        form.appendChild(input);
+
+        document.body.appendChild(form);
+        form.submit();
+
+        window.setTimeout(() => {
+          form.remove();
+          iframe.remove();
+          resolve();
+        }, 1500);
       });
     }
 
@@ -383,7 +407,8 @@ Tell me about a time when you had to make a judgment under incomplete informatio
 
       try {
         await saveNoteToSheet(key, currentQuestion, value);
-        notesStatus.textContent = value ? 'Note saved to Google Sheet.' : 'Note cleared in Google Sheet.';
+        notesStatus.textContent = value ? 'Note sent to Google Sheet. Syncing back...' : 'Note clear request sent. Syncing back...';
+        window.setTimeout(syncNotesFromSheet, 1200);
       } catch (error) {
         notesStatus.textContent = `Saved locally, but could not write to Google Sheet. ${error.message}`;
       }
