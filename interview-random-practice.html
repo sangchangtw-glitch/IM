@@ -244,6 +244,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     const tipsGid = '1665061689';
     const tipsGvizUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/gviz/tq?gid=${tipsGid}`;
     const tipsCsvUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/export?format=csv&gid=${tipsGid}`;
+    const notesApiUrl = 'https://script.google.com/macros/s/AKfycbzclQBlIUKASoaqlqMZKBkCuBqQQF2lxzhnSrniJKsIjuXTaemwiHEdwvfz1vWKUOCt/exec';
     const tipsSheetName = 'Answer Tips';
     const sampleQuestions = document.getElementById('questions').value;
     const questionsEl = document.getElementById('questions');
@@ -292,7 +293,64 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       questionNotes.placeholder = 'Write notes for this question...';
     }
 
-    function saveCurrentNote() {
+    function loadNotesWithJsonp() {
+      return new Promise((resolve, reject) => {
+        const callbackName = `notesCallback_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+        const script = document.createElement('script');
+        const cleanup = () => {
+          delete window[callbackName];
+          script.remove();
+        };
+
+        window[callbackName] = response => {
+          try {
+            const notesMap = {};
+            Object.entries(response || {}).forEach(([key, value]) => {
+              const note = typeof value === 'string' ? value : value.note;
+              if (note && note.trim()) notesMap[key] = note.trim();
+            });
+            resolve(notesMap);
+          } catch (error) {
+            reject(error);
+          } finally {
+            cleanup();
+          }
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('Notes sync failed.'));
+        };
+
+        script.src = `${notesApiUrl}?callback=${callbackName}&cacheBust=${Date.now()}`;
+        document.body.appendChild(script);
+      });
+    }
+
+    async function syncNotesFromSheet() {
+      notesStatus.textContent = 'Syncing notes...';
+      try {
+        const notesMap = await loadNotesWithJsonp();
+        setNotesMap(notesMap);
+        loadCurrentNote();
+        renderNotesReview();
+      } catch (error) {
+        renderNotesReview();
+        notesStatus.textContent = `Could not sync notes. Using saved notes. ${error.message}`;
+      }
+    }
+
+    async function saveNoteToSheet(key, question, note) {
+      const payload = encodeURIComponent(JSON.stringify({ key, question, note }));
+      await fetch(notesApiUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: `payload=${payload}`
+      });
+    }
+
+    async function saveCurrentNote() {
       if (!currentQuestion) {
         notesStatus.textContent = 'Random a question before saving notes.';
         return;
@@ -310,7 +368,14 @@ Tell me about a time when you had to make a judgment under incomplete informatio
 
       setNotesMap(notesMap);
       renderNotesReview();
-      notesStatus.textContent = value ? 'Note saved for this question.' : 'Note cleared for this question.';
+      notesStatus.textContent = 'Saving note to Google Sheet...';
+
+      try {
+        await saveNoteToSheet(key, currentQuestion, value);
+        notesStatus.textContent = value ? 'Note saved to Google Sheet.' : 'Note cleared in Google Sheet.';
+      } catch (error) {
+        notesStatus.textContent = `Saved locally, but could not write to Google Sheet. ${error.message}`;
+      }
     }
 
     function renderNotesReview() {
@@ -600,7 +665,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     document.getElementById('syncSheet').addEventListener('click', syncGoogleSheet);
     document.getElementById('syncTips').addEventListener('click', syncAnswerTips);
     document.getElementById('saveNote').addEventListener('click', saveCurrentNote);
-    document.getElementById('refreshNotes').addEventListener('click', renderNotesReview);
+    document.getElementById('refreshNotes').addEventListener('click', syncNotesFromSheet);
     document.getElementById('random').addEventListener('click', randomQuestion);
     document.getElementById('replay').addEventListener('click', () => {
       if (currentQuestion) speak(currentQuestion);
@@ -636,6 +701,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     window.speechSynthesis.onvoiceschanged = loadVoices;
     syncGoogleSheet();
     syncAnswerTips();
+    syncNotesFromSheet();
 
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       navigator.serviceWorker.register('service-worker.js');
