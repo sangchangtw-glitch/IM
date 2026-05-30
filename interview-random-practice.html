@@ -74,6 +74,10 @@
       background: #fff;
     }
 
+    textarea.notes-input {
+      min-height: 96px;
+    }
+
     .row {
       display: flex;
       flex-wrap: wrap;
@@ -120,6 +124,7 @@
       font-size: 15px;
       line-height: 1.5;
       white-space: pre-wrap;
+      max-height: none;
     }
 
     .tips-box:empty::before {
@@ -184,7 +189,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       <div class="row">
         <button id="syncTips">Sync Answer Tips</button>
         <button id="toggleTips">Hide Tips</button>
-        <span class="small">Reads the Answer Tips sheet tab, column A.</span>
+        <span class="small">Shows all tips from the Answer Tips sheet tab.</span>
       </div>
     </section>
 
@@ -194,8 +199,15 @@ Tell me about a time when you had to make a judgment under incomplete informatio
         <span id="remaining">0 remaining</span>
       </div>
       <div class="question-box" id="questionBox">Press Random Question to start.</div>
+      <div class="row" style="align-items: stretch">
+        <div style="flex: 1 1 100%">
+          <label for="questionNotes">Notes For This Question</label>
+          <textarea class="notes-input" id="questionNotes" placeholder="Write what to watch out for, e.g. calculated risk, tradeoff, metric, stronger ending..."></textarea>
+        </div>
+      </div>
       <div class="row">
         <button class="primary" id="random">Random Question</button>
+        <button id="saveNote">Save Note</button>
         <button id="replay">Replay</button>
         <button id="stop">Stop</button>
         <button id="resetRound">Reset Round</button>
@@ -212,18 +224,35 @@ Tell me about a time when you had to make a judgment under incomplete informatio
         </select>
       </div>
     </section>
+
+    <section class="panel">
+      <div class="meta">
+        <strong>Notes Review</strong>
+        <span id="notesStatus">0 saved notes</span>
+      </div>
+      <div class="tips-box" id="notesReview"></div>
+      <div class="row">
+        <button id="refreshNotes">Refresh Notes Review</button>
+        <button id="toggleNotesReview">Hide Review</button>
+      </div>
+    </section>
   </main>
 
   <script>
     const googleSheetId = '1St9zABXfy2qfjBXZTd_ICJizXc86E_o18LnHocC2RgM';
     const questionBankGvizUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/gviz/tq?gid=0`;
-    const tipsGvizUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/gviz/tq?gid=1665061689`;
+    const tipsGid = '1665061689';
+    const tipsGvizUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/gviz/tq?gid=${tipsGid}`;
+    const tipsCsvUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/export?format=csv&gid=${tipsGid}`;
     const tipsSheetName = 'Answer Tips';
     const sampleQuestions = document.getElementById('questions').value;
     const questionsEl = document.getElementById('questions');
     const questionBox = document.getElementById('questionBox');
+    const questionNotes = document.getElementById('questionNotes');
     const tipsBox = document.getElementById('tipsBox');
     const tipsStatus = document.getElementById('tipsStatus');
+    const notesReview = document.getElementById('notesReview');
+    const notesStatus = document.getElementById('notesStatus');
     const counter = document.getElementById('counter');
     const remaining = document.getElementById('remaining');
     const voiceSelect = document.getElementById('voice');
@@ -235,6 +264,63 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     let remainingIndexes = [];
     let currentQuestion = '';
     let voices = [];
+
+    function noteKey(question) {
+      return question.replace(/^\s*Q\d+\.\s*/i, '').replace(/\s+/g, ' ').trim();
+    }
+
+    function getNotesMap() {
+      try {
+        return JSON.parse(localStorage.getItem('interviewQuestionNotes') || '{}');
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function setNotesMap(notesMap) {
+      localStorage.setItem('interviewQuestionNotes', JSON.stringify(notesMap));
+    }
+
+    function loadCurrentNote() {
+      if (!currentQuestion) {
+        questionNotes.value = '';
+        questionNotes.placeholder = 'Random a question first, then write notes for it.';
+        return;
+      }
+      const notesMap = getNotesMap();
+      questionNotes.value = notesMap[noteKey(currentQuestion)] || '';
+      questionNotes.placeholder = 'Write notes for this question...';
+    }
+
+    function saveCurrentNote() {
+      if (!currentQuestion) {
+        notesStatus.textContent = 'Random a question before saving notes.';
+        return;
+      }
+
+      const key = noteKey(currentQuestion);
+      const notesMap = getNotesMap();
+      const value = questionNotes.value.trim();
+
+      if (value) {
+        notesMap[key] = value;
+      } else {
+        delete notesMap[key];
+      }
+
+      setNotesMap(notesMap);
+      renderNotesReview();
+      notesStatus.textContent = value ? 'Note saved for this question.' : 'Note cleared for this question.';
+    }
+
+    function renderNotesReview() {
+      const notesMap = getNotesMap();
+      const entries = Object.entries(notesMap).filter(([, note]) => note && note.trim());
+      notesStatus.textContent = `${entries.length} saved note${entries.length === 1 ? '' : 's'}`;
+      notesReview.textContent = entries
+        .map(([question, note], index) => `${index + 1}. ${question}\nNote: ${note}`)
+        .join('\n\n');
+    }
 
     function parseQuestions() {
       const raw = questionsEl.value.replace(/\r\n/g, '\n').trim();
@@ -324,6 +410,17 @@ Tell me about a time when you had to make a judgment under incomplete informatio
         .filter(line => line && !/^tips?$/i.test(line) && line.toUpperCase() !== 'TBD');
     }
 
+    function tipsFromCsv(csvText) {
+      return parseCsvRows(csvText)
+        .map(row => row
+          .map(cell => String(cell || '').trim())
+          .filter(Boolean)
+          .join(' ')
+        )
+        .map(line => line.replace(/\s+/g, ' ').trim())
+        .filter(line => line && !/^tips?$/i.test(line) && line.toUpperCase() !== 'TBD');
+    }
+
     function loadSheetWithJsonp(sheetName, parser, sourceUrl) {
       return new Promise((resolve, reject) => {
         const callbackName = `sheetCallback_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
@@ -369,7 +466,15 @@ Tell me about a time when you had to make a judgment under incomplete informatio
     async function syncAnswerTips() {
       tipsStatus.textContent = 'Syncing tips...';
       try {
-        const tips = await loadSheetWithJsonp('', tipsFromGvizResponse, tipsGvizUrl);
+        let tips = [];
+        try {
+          const response = await fetch(`${tipsCsvUrl}&cacheBust=${Date.now()}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          tips = tipsFromCsv(await response.text());
+        } catch (error) {
+          tips = await loadSheetWithJsonp('', tipsFromGvizResponse, tipsGvizUrl);
+        }
+
         if (!tips.length) throw new Error(`No tips found in "${tipsSheetName}".`);
         tipsBox.textContent = tips.map(tip => `- ${tip}`).join('\n');
         localStorage.setItem('interviewAnswerTips', tipsBox.textContent);
@@ -455,6 +560,7 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       const questionIndex = remainingIndexes.splice(pick, 1)[0];
       currentQuestion = questions[questionIndex];
       questionBox.textContent = currentQuestion;
+      loadCurrentNote();
       updateStatus();
       randomizeVoice();
       speak(currentQuestion);
@@ -493,6 +599,8 @@ Tell me about a time when you had to make a judgment under incomplete informatio
 
     document.getElementById('syncSheet').addEventListener('click', syncGoogleSheet);
     document.getElementById('syncTips').addEventListener('click', syncAnswerTips);
+    document.getElementById('saveNote').addEventListener('click', saveCurrentNote);
+    document.getElementById('refreshNotes').addEventListener('click', renderNotesReview);
     document.getElementById('random').addEventListener('click', randomQuestion);
     document.getElementById('replay').addEventListener('click', () => {
       if (currentQuestion) speak(currentQuestion);
@@ -511,12 +619,19 @@ Tell me about a time when you had to make a judgment under incomplete informatio
       tipsBox.style.display = hidden ? '' : 'none';
       e.target.textContent = hidden ? 'Hide Tips' : 'Show Tips';
     });
+    document.getElementById('toggleNotesReview').addEventListener('click', (e) => {
+      const hidden = notesReview.style.display === 'none';
+      notesReview.style.display = hidden ? '' : 'none';
+      e.target.textContent = hidden ? 'Hide Review' : 'Show Review';
+    });
 
     const saved = localStorage.getItem('interviewQuestions');
     if (saved) questionsEl.value = saved;
     const savedTips = localStorage.getItem('interviewAnswerTips');
     if (savedTips) tipsBox.textContent = savedTips;
     parseQuestions();
+    loadCurrentNote();
+    renderNotesReview();
     loadVoices();
     window.speechSynthesis.onvoiceschanged = loadVoices;
     syncGoogleSheet();
